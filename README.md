@@ -13,6 +13,6 @@ made in the Swift Playgrounds app on my iPad (hence the strange packaging).
 
 ## Why the name?
 
-- [Vulcan](https://en.wikipedia.org/wiki/Vulcan_(mythology) is the namesake god of volcanos
+- [Vulcan](https://en.wikipedia.org/wiki/Vulcan_(mythology)) is the namesake god of volcanos
 in Roman mythology, just like how this app makes you the god of your own Volcano.
 

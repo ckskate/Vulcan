@@ -16,3 +16,7 @@ made in the Swift Playgrounds app on my iPad (hence the strange packaging).
 - [Vulcan](https://en.wikipedia.org/wiki/Vulcan_(mythology)) is the namesake god of volcanos
 in Roman mythology, just like how this app makes you the god of your own Volcano.
 
+## Video demo
+
+https://user-images.githubusercontent.com/6403838/223523703-374a73ae-71f0-434b-969b-b80224bbcd51.mov
+

@@ -1,28 +1,56 @@
 import SwiftUI
 
-struct Temperature {
-    private let actualCelciusVal: Double
+struct Temperature: Equatable {
+    static let zero: Temperature = .farenheit(0)
     
-    static let zero: Temperature = Temperature(actualCelciusVal: 0.0)
+    enum Unit {
+        case celsius, farenheit
+    }
     
-    static func from(data: Data) -> Temperature {
+    private var celsiusVal: Int
+    
+    static func farenheit(_ degrees: Int) -> Self {
+        let celsiusVal = (Double(degrees) - 32.0) * (5/9)
+        return Temperature(celsiusVal: Int(celsiusVal))
+    }
+    
+    static func celcius(_ degrees: Int) -> Self {
+        return Temperature(celsiusVal: degrees)
+    }
+    
+    init(data: Data) {
         let scaledUpTemp = data.withUnsafeBytes {
             $0.load(as: Int32.self).littleEndian
         }
-        return Temperature(actualCelciusVal: Double(scaledUpTemp) / 10.0)
+        self.celsiusVal = Int(Double(scaledUpTemp) / 10.0)
     }
     
-    static func from(fahrInt: Int) -> Temperature {
-        let celciusVal = (Double(fahrInt) - 32.0) * (5/9)
-        return Temperature(actualCelciusVal: celciusVal)
+    // no public initializer
+    private init(celsiusVal: Int) {
+        self.celsiusVal = celsiusVal
     }
+   
+    // MARK: - reading values
     
-    var asFahrInt: Int {
-        Int(round(((9/5) * self.actualCelciusVal) + 32.0))
+    func value(unit: Unit = .farenheit) -> Int {
+        switch unit {
+        case .celsius: return self.celsiusVal
+        case .farenheit: return Int(round(((9/5) * Double(self.celsiusVal)) + 32.0))
+        }
     }
     
     var asData: Data {
-        let scaledIntTemp = Int32(self.actualCelciusVal * 10.0)
+        let scaledIntTemp = Int32(self.celsiusVal * 10)
         return withUnsafeBytes(of: scaledIntTemp.littleEndian) { Data($0) }
+    }
+    
+    // MARK: - operators 
+    
+    static func +=(lhs: inout Temperature, rhs: Temperature) {
+        lhs.celsiusVal += rhs.celsiusVal
+    }
+    
+    static func -=(lhs: inout Temperature, rhs: Temperature) {
+        lhs.celsiusVal -= rhs.celsiusVal
     }
 }

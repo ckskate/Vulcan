@@ -16,24 +16,25 @@ struct BLEServices {
         return [self.service1, self.service2]
     }
     
-    static func from(_ services: [CBService]) -> BLEServices? {
-        var service1: CBService? = nil
-        var service2: CBService? = nil
+    init?(_ services: [CBService]) {
+        var service1: CBService?
+        var service2: CBService?
         for service in services {
             switch service.uuid {
-            case service1UUID:
+            case BLEServices.service1UUID:
                 service1 = service
-            case service2UUID:
+            case BLEServices.service2UUID:
                 service2 = service
             default:
                 continue
             }
         }
-        guard let service1 = service1,
-              let service2 = service2 else {
+        guard let service1,
+              let service2 else {
             return nil
         }
-        return BLEServices(service1: service1, service2: service2)
+        self.service1 = service1
+        self.service2 = service2
     }
 }
 
@@ -76,7 +77,7 @@ struct BLECharacteristics {
     let startAirChar: CBCharacteristic
     let stopAirChar: CBCharacteristic
     
-    static func from(_ characteristics: [CBCharacteristic]) -> BLECharacteristics? {
+    init?(_ characteristics: [CBCharacteristic]) {
         var firmwareChar: CBCharacteristic?
         var serialChar: CBCharacteristic?
         var modelChar: CBCharacteristic?
@@ -89,51 +90,51 @@ struct BLECharacteristics {
         var stopAirChar: CBCharacteristic?
         for char in characteristics {
             switch char.uuid {
-            case firmwareCharUUID:
+            case BLECharacteristics.firmwareCharUUID:
                 firmwareChar = char
-            case serialCharUUID:
+            case BLECharacteristics.serialCharUUID:
                 serialChar = char
-            case modelCharUUID:
+            case BLECharacteristics.modelCharUUID:
                 modelChar = char
-            case currTempCharUUID:
+            case BLECharacteristics.currTempCharUUID:
                 currTempChar = char
-            case targTempCharUUID:
+            case BLECharacteristics.targTempCharUUID:
                 targTempChar = char
-            case isHeatAirEnabledCharUUID:
+            case BLECharacteristics.isHeatAirEnabledCharUUID:
                 isHeatAirEnabledChar = char
-            case startHeatCharUUID:
+            case BLECharacteristics.startHeatCharUUID:
                 startHeatChar = char
-            case stopHeatCharUUID:
+            case BLECharacteristics.stopHeatCharUUID:
                 stopHeatChar = char
-            case startAirCharUUID:
+            case BLECharacteristics.startAirCharUUID:
                 startAirChar = char
-            case stopAirCharUUID:
+            case BLECharacteristics.stopAirCharUUID:
                 stopAirChar = char
             default:
                 continue
             }
         }
-        guard let firmwareChar = firmwareChar,
-              let serialChar = serialChar,
-              let modelChar = modelChar,
-              let currTempChar = currTempChar,
-              let targTempChar = targTempChar,
-              let isHeatAirEnabledChar = isHeatAirEnabledChar,
-              let startHeatChar = startHeatChar,
-              let stopHeatChar = stopHeatChar,
-              let startAirChar = startAirChar,
-              let stopAirChar = stopAirChar else {
+        guard let firmwareChar,
+              let serialChar,
+              let modelChar,
+              let currTempChar,
+              let targTempChar,
+              let isHeatAirEnabledChar,
+              let startHeatChar,
+              let stopHeatChar,
+              let startAirChar,
+              let stopAirChar else {
             return nil
         }
-        return BLECharacteristics(firmwareChar: firmwareChar, 
-                                  serialChar: serialChar, 
-                                  modelChar: modelChar, 
-                                  currTempChar: currTempChar, 
-                                  targTempChar: targTempChar, 
-                                  isHeatAirEnabledChar: isHeatAirEnabledChar, 
-                                  startHeatChar: startHeatChar, 
-                                  stopHeatChar: stopHeatChar, 
-                                  startAirChar: startAirChar, 
-                                  stopAirChar: stopAirChar)
+        self.firmwareChar = firmwareChar
+        self.serialChar = serialChar
+        self.modelChar = modelChar
+        self.currTempChar = currTempChar
+        self.targTempChar = targTempChar
+        self.isHeatAirEnabledChar = isHeatAirEnabledChar
+        self.startHeatChar = startHeatChar
+        self.stopHeatChar = stopHeatChar
+        self.startAirChar = startAirChar
+        self.stopAirChar = stopAirChar
     }
 }

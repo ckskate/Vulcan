@@ -9,20 +9,8 @@ import SwiftUI
 
 struct VolcanoControllerView: View {
     
-    @Environment(\.colorScheme) var colorScheme: ColorScheme
-    
-    @StateObject var viewModel: VolcanoControllerViewModel
-    
-    @State var currTemp: Int = 360
-    @State var targTemp: Int = 400
-    @State var isHeating: Bool = false
-    @State var isAirOn: Bool = false
-    
-    private var backgroundColor: Color {
-        return (self.colorScheme == .dark) 
-                    ? .black 
-                    : .white
-    }
+    @Environment(\.backgroundColor) var backgroundColor: Color
+    @Service(\.volcanoManager) var volcanoManager: VolcanoManager
     
     var body: some View {
         ZStack {
@@ -39,7 +27,7 @@ struct VolcanoControllerView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
-                        Text("\(self.currTemp)º F")
+                        Text("\(self.volcanoManager.currTemp.value())º F")
                             .font(.system(size: 64))
                             .fontWeight(.heavy)
                             .frame(minWidth: 200, idealWidth: 300, alignment: .leading)
@@ -63,9 +51,13 @@ struct VolcanoControllerView: View {
                             
                         HStack() {
                             Spacer()
-                            TemperatureButton(type: .minus, value: self.$targTemp)
-                            TemperatureLabel(value: self.$targTemp, smoothValue: Double(self.targTemp))
-                            TemperatureButton(type: .plus, value: self.$targTemp)
+                            TemperatureButton(type: .minus, value: self.volcanoManager.targTemp)
+                            TemperatureLabel(value: self.volcanoManager.targTemp,
+                                             smoothValue: Double(self.volcanoManager
+                                                                     .targTemp
+                                                                     .wrappedValue
+                                                                     .value()))
+                            TemperatureButton(type: .plus, value: self.volcanoManager.targTemp)
                             Spacer()
                         }
                     }
@@ -76,8 +68,8 @@ struct VolcanoControllerView: View {
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
                         HStack(spacing: 16) {
-                            ControlButton(type: .power, toggled: self.$isHeating)
-                            ControlButton(type: .wind, toggled: self.$isAirOn)
+                            ControlButton(type: .power, toggled: self.volcanoManager.isHeatOn)
+                            ControlButton(type: .wind, toggled: self.volcanoManager.isAirOn)
                         }
                     }
                 }
@@ -91,45 +83,48 @@ struct VolcanoControllerView: View {
             .padding()
             .frame(maxWidth: 640)
         }
-        .onChange(of: self.targTemp) { _ in
-            self.viewModel.setTargTemp(to: self.targTemp)
-        }
-        .onChange(of: self.isAirOn) { _ in
-            self.viewModel.setHeatAirState(isHeatOn: self.isHeating, isAirOn: self.isAirOn)
-        }
-        .onChange(of: self.isHeating) { _ in
-            self.viewModel.setHeatAirState(isHeatOn: self.isHeating, isAirOn: self.isAirOn)
-        }
-        .task {
-            while true {
-                for await newState in self.viewModel.backgroundUpdateStream {
-                    self.targTemp = newState.targTemp.asFahrInt
-                    self.currTemp = newState.currTemp.asFahrInt
-                    switch newState.heatAirState {
-                    case .allOff:
-                        self.isAirOn = false
-                        self.isHeating = false
-                    case .heatAndAirOn:
-                        self.isAirOn = true
-                        self.isHeating = true
-                    case .heatOn:
-                        self.isAirOn = false
-                        self.isHeating = true
-                    }
-                }
-            }
+//        .onChange(of: self.targTemp) { _ in
+//            self.viewModel.setTargTemp(to: self.targTemp)
+//        }
+//        .onChange(of: self.isAirOn) { _ in
+//            self.viewModel.setHeatAirState(isHeatOn: self.isHeating, isAirOn: self.isAirOn)
+//        }
+//        .onChange(of: self.isHeating) { _ in
+//            print("heat button pressed")
+//            self.viewModel.setHeatAirState(isHeatOn: self.isHeating, isAirOn: self.isAirOn)
+//        }
+        .task(id: self.volcanoManager.state) {
+            await self.volcanoManager.readDeviceUpdates()
+//            while true {
+//                for await newState in self.viewModel.backgroundUpdateStream {
+//                    self.targTemp = newState.targTemp.value()
+//                    self.currTemp = newState.currTemp.value()
+//                    switch newState.heatAirState {
+//                    case .allOff:
+//                        self.isAirOn = false
+//                        self.isHeating = false
+//                    case .heatAndAirOn:
+//                        self.isAirOn = true
+//                        self.isHeating = true
+//                    case .heatOn:
+//                        self.isAirOn = false
+//                        self.isHeating = true
+//                    }
+//                }
+//            }
         }
     }
 }
 
-
 struct TemperatureButton: View {
+    @Environment(\.backgroundColor) var backgroundColor: Color
+    
     enum buttonType: String {
         case plus, minus
     }
     
-    @State var type: buttonType = .plus
-    @Binding var value: Int
+    let type: buttonType
+    @Binding var value: Temperature
     
     @GestureState var isTapping: Bool = false
     @GestureState var isDetectingLongPress = false
@@ -163,37 +158,31 @@ struct TemperatureButton: View {
     func updateValue() {
         switch self.type {
         case .plus:
-            self.value += 1
+            self.value += .farenheit(1)
         case .minus:
-            self.value -= 1
+            self.value -= .farenheit(1)
         }
     }
     
     var body: some View {
-        Button(action: {
-            self.updateValue()
-            self.feedbackGenerator.impactOccurred(intensity: 0.6)
-        }) {
-            ZStack {
-                Circle()
-                    .fill(self.isTapping
-                          ? Color.primary
-                          : Color.clear)
-                    .overlay(
-                        Circle()
-                            .stroke(lineWidth: 3)
-                            .fill(Color.primary)
-                    )
-                    .frame(width: 64, height: 64)
-                    .shadow(radius: 8)
-                    .animation(.easeInOut(duration: 0.22), value: self.isDetectingLongPress)
-                Image(systemName: self.type.rawValue)
-                    .font(.system(size: 32))
-                    .foregroundColor(self.isTapping
-                                     ? Color.white
-                                     : Color.primary)
-            }
+        ZStack {
+            Circle()
+                .strokeBorder(.primary, lineWidth: 3)
+                .background {
+                    Circle()
+                        .fill(self.isTapping
+                              ? Color.primary
+                              : Color.clear)
+                }
+            Image(systemName: self.type.rawValue)
+                .font(.system(size: 32))
+                .foregroundColor(self.isTapping
+                                 ? self.backgroundColor
+                                 : Color.primary)
         }
+        .frame(width: 64, height: 64)
+        .shadow(radius: 8)
+        .animation(.easeInOut(duration: 0.22), value: self.isDetectingLongPress)
         .scaleEffect(self.isDetectingVeryLongPress
                      ? 1.3
                      : self.isDetectingLongPress
@@ -201,6 +190,13 @@ struct TemperatureButton: View {
                        : self.isTapping
                          ? 1.1
                          : 1)
+        .contentShape(.hoverEffect, Circle())
+        .contentShape(.interaction, Circle())
+        .hoverEffect()
+        .onTapGesture {
+            self.updateValue()
+            self.feedbackGenerator.impactOccurred(intensity: 0.6)
+        }
         .simultaneousGesture(self.longPress)
         .onChange(of: self.isDetectingLongPress) { _ in
             guard self.isDetectingLongPress else {
@@ -223,11 +219,12 @@ struct TemperatureButton: View {
                 
                 self.isDetectingVeryLongPress = (repeatCount >= 20)
                 
+                let change: Temperature = self.isDetectingVeryLongPress
+                                    ? .farenheit(2)
+                                    : .farenheit(1)
                 switch self.type {
-                case .plus:
-                    self.value += (self.isDetectingVeryLongPress) ? 2 : 1
-                case .minus:
-                    self.value -= (self.isDetectingVeryLongPress) ? 2 : 1
+                case .plus: self.value += change
+                case .minus: self.value -= change
                 }
                 
                 if repeatCount == 20 {
@@ -242,59 +239,63 @@ struct TemperatureButton: View {
     }
 }
 
-
 struct ControlButton: View {
+    @Environment(\.backgroundColor) var backgroundColor: Color
     
     enum ButtonType: String {
         case power, wind
     }
     
-    @State var type: ButtonType = .power
+    let type: ButtonType
     @Binding var toggled: Bool
+
     @State var pressed: Bool = false
     
-    @Environment(\.colorScheme) var colorScheme: ColorScheme
-    
-    private var secondaryColor: Color {
-        return (self.colorScheme == .dark) 
-            ? .black 
-            : .white
-    }
-    
     var body: some View {
-        Button(action: {}) {
+        Toggle(isOn: self.$toggled) {
             ZStack {
-                Rectangle()
-                    .fill(self.toggled ? Color.primary : Color.clear)
-                    .border(Color.primary, width: 3)
-                    .cornerRadius(6)
-                .frame(height: 64)
+                RoundedRectangle(cornerRadius: 6.0)
+                    .fill()
+                    .foregroundColor(self.toggled ? Color.primary : .clear)
+                RoundedRectangle(cornerRadius: 6.0)
+                    .strokeBorder(.primary, lineWidth: 3.0)
                 Image(systemName: self.type.rawValue)
                     .font(.largeTitle)
-                    .foregroundColor(self.toggled ? self.secondaryColor : Color.primary)
-                    
+                    .foregroundColor(self.toggled
+                                     ? self.backgroundColor
+                                     : .primary)
+                
             }
+            .frame(height: 64)
         }
-        .scaleEffect(self.pressed ? 1 : 0.9)
+        .toggleStyle(.button)
+        .tint(.primary)
+        .scaleEffect(self.pressed ? 1.03 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: 6.0))
+        .hoverEffect()
+//        .onHover { hovering in
+//            withAnimation {
+//                self.pressed = hovering
+//            }
+//        }
         .animation(.easeInOut(duration: 0.22), value: self.pressed)
-        .onLongPressGesture(minimumDuration: .infinity,
-                            perform: {},
-                            onPressingChanged: { isPressed in
-            let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
-            feedbackGenerator.impactOccurred()
-            
-            self.pressed = isPressed
-            if isPressed == false {
-                self.toggled = !self.toggled
-            }
-        })
+//        .onLongPressGesture(minimumDuration: .infinity,
+//                            perform: {},
+//                            onPressingChanged: { isPressed in
+//            let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+//            feedbackGenerator.impactOccurred()
+//            
+//            self.pressed = isPressed
+//            if isPressed == false {
+//                self.toggled = !self.toggled
+//            }
+//        })
     }
 }
 
-
 struct TemperatureLabel: View {
     
-    @Binding var value: Int
+    @Binding var value: Temperature
     @State var smoothValue: Double
     @State var selectionFeedbackGenerator: UISelectionFeedbackGenerator?
     
@@ -307,7 +308,6 @@ struct TemperatureLabel: View {
                 self.selectionFeedbackGenerator?.prepare()
             }
             .onChanged { dragValue in
-                
                 if self.selectionFeedbackGenerator == nil {
                     self.selectionFeedbackGenerator = UISelectionFeedbackGenerator()
                     self.selectionFeedbackGenerator?.prepare()
@@ -317,8 +317,8 @@ struct TemperatureLabel: View {
                 let dragOffset = abs(dragValue.predictedEndLocation.y - dragValue.location.y)
                 let scaledOffset = dragOffset / 50
                 
-                if abs(self.smoothValue - Double(self.value)) > 1 {
-                    self.smoothValue = Double(self.value)
+                if abs(self.smoothValue - Double(self.value.value())) > 1 {
+                    self.smoothValue = Double(self.value.value())
                 }
             
                 if isDragUp {
@@ -329,23 +329,24 @@ struct TemperatureLabel: View {
                 
                 let clampedValue = Int(smoothValue)
                 
-                if clampedValue != self.value {
+                if clampedValue != self.value.value() {
                     self.selectionFeedbackGenerator?.selectionChanged()
                     self.selectionFeedbackGenerator?.prepare()
                 }
                 
-                self.value = clampedValue
+                self.value = .farenheit(clampedValue)
             }
     }
     
     var body: some View {
-        Text("\(self.value)º F")
+        Text("\(self.value.value())º F")
             .font(.title)
             .fontWeight(.medium)
             .frame(width: 110,
-                   height: nil,
+                   height: 48,
                    alignment: .center)
             .scaleEffect(self.dragging ? 1.2 : 1)
+            .hoverEffect()
             .animation(.easeInOut(duration: 0.1), value: self.dragging)
             .gesture(self.drag)
     }
@@ -353,6 +354,6 @@ struct TemperatureLabel: View {
 
 struct VolcanoControllerView_Previews: PreviewProvider {
     static var previews: some View {
-        VolcanoControllerView(viewModel: VolcanoControllerViewModel(bluetoothService: Services(isDebugMode: true).bluetoothService))
+        VolcanoControllerView()
     }
 }

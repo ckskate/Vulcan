@@ -38,15 +38,9 @@ let package = Package(
             appCategory: .utilities
         )
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-collections", "1.0.2"..<"2.0.0")
-    ],
     targets: [
         .executableTarget(
             name: "AppModule",
-            dependencies: [
-                .product(name: "OrderedCollections", package: "swift-collections")
-            ],
             path: "."
         )
     ]

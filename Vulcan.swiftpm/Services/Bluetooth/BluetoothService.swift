@@ -8,8 +8,10 @@
 import Foundation
 import CoreBluetooth
 
-enum BluetoothError: Error {
-    case deviceNotFound, unsupportedPlatform, permissionDenied
+enum BluetoothError: LocalizedError, Identifiable {
+    case deviceNotFound, disconnected, unsupported, permissionDenied
+    
+    var id: Self { return self }
 }
 
 protocol BluetoothService: Actor {
@@ -23,8 +25,15 @@ protocol BluetoothService: Actor {
     func getCurrTemp() async -> Result<Temperature, BluetoothError>
     func getTargTemp() async -> Result<Temperature, BluetoothError>
     func getHeatAirState() async -> Result<HeatAirState, BluetoothError>
+    
     func set(temp: Temperature) async
     func set(heatAirState: HeatAirState) async
+    
+    static var scanLength: TimeInterval { get }
+}
+
+extension BluetoothService {
+    static var scanLength: TimeInterval { return 10.0 }
 }
 
 actor ProductionBluetoothService: BluetoothService {
@@ -42,18 +51,13 @@ actor ProductionBluetoothService: BluetoothService {
     private var chars: BLECharacteristics?
     private var services: BLEServices?
     
-    private var currTemp: Temperature = .zero
-    private var targTemp: Temperature = .zero
-    private var currHeatAirState: HeatAirState = .allOff
-    
-    private var isCurrTempFreshlyWritten = false
-    private var isTargTempFreshlyWritten = false
-    private var isHeatAirFreshlyWritten = false
-    
     public var isConnectedAndReady: Bool {
-        return (self.volcano?.state ?? .none) == .connected
-                && self.services != nil
-                && self.chars != nil
+        guard self.chars != nil,
+              self.services != nil,
+              let connectionState = self.volcano?.state else {
+            return false
+        }
+        return connectionState == .connected
     }
 
     init() {
@@ -70,9 +74,7 @@ actor ProductionBluetoothService: BluetoothService {
         // discover and store volcano
         let volcanoResult = await self.discoverVolcano()
         guard case let .success(volcano) = volcanoResult else {
-            // we know it's the error case here, 
-            // so just force the result types to match
-            return volcanoResult.map { CBPeripheral -> Void in () }
+            return .failure(.deviceNotFound)
         }
         volcano.delegate = self.cBDelegate
         self.volcano = volcano
@@ -81,8 +83,8 @@ actor ProductionBluetoothService: BluetoothService {
             return .failure(error)
         }
         // discover and store required services and characteristics
-        self.services = BLEServices.from(await self.discoverRequiredServices())
-        self.chars = BLECharacteristics.from(await self.discoverRequiredCharacteristics())
+        self.services = BLEServices(await self.discoverRequiredServices())
+        self.chars = BLECharacteristics(await self.discoverRequiredCharacteristics())
         return .success(())
     }
     
@@ -96,11 +98,11 @@ actor ProductionBluetoothService: BluetoothService {
         self.centralManager.cancelPeripheralConnection(volcano)
     }
     
-    // getting/setting state
+    // MARK: getting/setting state
     
     public func getCurrTemp() async -> Result<Temperature, BluetoothError> {
         guard let chars = self.chars else {
-            fatalError("Need the characteristics")
+            return .failure(.disconnected)
         }
         
         let devCurrTemp: Data? = await withTaskGroup(of: Data?.self) { taskGroup in
@@ -121,18 +123,12 @@ actor ProductionBluetoothService: BluetoothService {
         guard let devCurrTemp = devCurrTemp else {
             return .failure(.deviceNotFound)
         }
-        
-        guard self.isCurrTempFreshlyWritten == false else {
-            self.isCurrTempFreshlyWritten = false
-            return .success(self.currTemp)
-        }
-        self.currTemp = Temperature.from(data: devCurrTemp)
-        return .success(self.currTemp)
+        return .success(Temperature(data: devCurrTemp))
     }
     
     public func getTargTemp() async -> Result<Temperature, BluetoothError> {
         guard let chars = self.chars else {
-            fatalError("Need the characteristics")
+            return .failure(.disconnected)
         }
         
         let devTargTemp: Data? = await withTaskGroup(of: Data?.self) { taskGroup in
@@ -153,27 +149,19 @@ actor ProductionBluetoothService: BluetoothService {
         guard let devTargTemp = devTargTemp else {
             return .failure(.deviceNotFound)
         }
-        
-        guard self.isTargTempFreshlyWritten == false else {
-            self.isTargTempFreshlyWritten = false
-            return .success(self.targTemp)
-        }
-        self.targTemp = Temperature.from(data: devTargTemp)
-        return .success(self.targTemp)
+        return .success(Temperature(data: devTargTemp))
     }
     
     public func set(temp: Temperature) async {
         guard let chars = self.chars else {
             fatalError("Need the characteristics")
         }
-        self.isTargTempFreshlyWritten = true
-        self.targTemp = temp
         await self.writeValue(temp.asData, for: chars.targTempChar)
     }
     
     public func getHeatAirState() async -> Result<HeatAirState, BluetoothError> {
         guard let chars = self.chars else {
-            fatalError("Need the characteristics")
+            return .failure(.disconnected)
         }
         
         let devHeatAirState: Data? = await withTaskGroup(of: Data?.self) { taskGroup in
@@ -195,61 +183,43 @@ actor ProductionBluetoothService: BluetoothService {
             return .failure(.deviceNotFound)
         }
         
-        guard self.isHeatAirFreshlyWritten == false else {
-            self.isHeatAirFreshlyWritten = false
-            return .success(self.currHeatAirState)
-        }
-        self.currHeatAirState = HeatAirState.from(data: devHeatAirState)
-        return .success(self.currHeatAirState)
+        return .success(HeatAirState(data: devHeatAirState))
     }
-    
     
     public func set(heatAirState: HeatAirState) async {
         guard let chars = self.chars else {
-            fatalError("Need the characteristics")
+            return
         }
-        self.isHeatAirFreshlyWritten = true
-        self.currHeatAirState = heatAirState
         
         await withTaskGroup(of: Void.self) { taskGroup in
+            let charsToWrite: (air: CBCharacteristic, heat: CBCharacteristic)
             switch heatAirState {
-            case .allOff:
-                taskGroup.addTask {
-                    await self.writeValue(Data(repeating: 1, count: 1), for: chars.stopAirChar)
-                }
-                taskGroup.addTask {
-                    await self.writeValue(Data(repeating: 1, count: 1), for: chars.stopHeatChar)
-                }
-            case .heatOn:
-                taskGroup.addTask {
-                    await self.writeValue(Data(repeating: 1, count: 1), for: chars.stopAirChar)
-                }
-                taskGroup.addTask {
-                    await self.writeValue(Data(repeating: 1, count: 1), for: chars.startHeatChar)
-                }
-            case .heatAndAirOn:
-                taskGroup.addTask {
-                    await self.writeValue(Data(repeating: 1, count: 1), for: chars.startAirChar)
-                }
-                taskGroup.addTask {
-                    await self.writeValue(Data(repeating: 1, count: 1), for: chars.startHeatChar)
-                }
+            case .allOff: charsToWrite = (air: chars.stopAirChar, heat: chars.stopHeatChar)
+            case .heatOn: charsToWrite = (air: chars.stopAirChar, heat: chars.startHeatChar)
+            case .heatAndAirOn: charsToWrite = (air: chars.startAirChar, heat: chars.startHeatChar)
             }
+            taskGroup.addTask {
+                await self.writeValue(Data(repeating: 1, count: 1), for: charsToWrite.air)
+            }
+            taskGroup.addTask {
+                await self.writeValue(Data(repeating: 1, count: 1), for: charsToWrite.heat)
+            }
+            await taskGroup.waitForAll()
         }
     }
     
     // MARK: Data transfer helpers
     
     private func readValue(for characteristic: CBCharacteristic) async -> Data? {
-        defer {
-            self.runningCharacteristicReadTasks.removeValue(forKey: characteristic)
-        }
-        
         guard self.runningCharacteristicReadTasks[characteristic] == nil else {
             return await self.runningCharacteristicReadTasks[characteristic]!.value
         }
         
-        self.runningCharacteristicReadTasks[characteristic] = Task(priority: .userInitiated) {
+        defer {
+            self.runningCharacteristicReadTasks.removeValue(forKey: characteristic)
+        }
+        
+        let readTask = Task(priority: .userInitiated) { () -> Data? in
             guard let volcano = self.volcano,
                   case .success = await self.prepareCentralManager(),
                   case .success = await self.connectIfNeeded() else {
@@ -259,12 +229,14 @@ actor ProductionBluetoothService: BluetoothService {
             let newValue = await NotificationCenter
                                     .default
                                     .notifications(named: .charRead)
-                                    .first(where: { $0.userInfo?["char"] as? CBCharacteristic == characteristic })?
-                                    .userInfo?["data"] as? Data
+                                    .map { (char: $0.userInfo?["char"] as? CBCharacteristic,
+                                            data: $0.userInfo?["data"] as? Data) }
+                                    .first(where: { $0.char == characteristic })?
+                                    .data
             return newValue
         }
-        
-        return await self.runningCharacteristicReadTasks[characteristic]!.value
+        self.runningCharacteristicReadTasks[characteristic] = readTask
+        return await readTask.value
     }
     
     private func writeValue(_ data: Data, for characteristic: CBCharacteristic) async {
@@ -273,7 +245,6 @@ actor ProductionBluetoothService: BluetoothService {
               case .success = await self.connectIfNeeded() else {
             return
         }
-        print(data)
         volcano.writeValue(data,
                            for: characteristic,
                            type: .withResponse)
@@ -283,7 +254,7 @@ actor ProductionBluetoothService: BluetoothService {
     
     private func prepareCentralManager() async -> Result<(), BluetoothError> {
         guard self.centralManager.state != .unsupported else {
-            return .failure(.unsupportedPlatform)
+            return .failure(.unsupported)
         }
         
         guard self.centralManager.state != .unauthorized else {
@@ -303,12 +274,12 @@ actor ProductionBluetoothService: BluetoothService {
     }
     
     private func connectIfNeeded() async -> Result<Void, BluetoothError> {
-        defer {
-            self.runningDeviceConnectionTask = nil
-        }
-        
         guard self.runningDeviceConnectionTask == nil else {
             return await self.runningDeviceConnectionTask!.value
+        }
+        
+        defer {
+            self.runningDeviceConnectionTask = nil
         }
         
         self.runningDeviceConnectionTask = Task(priority: .userInitiated) {
@@ -326,21 +297,39 @@ actor ProductionBluetoothService: BluetoothService {
             }
             
             self.centralManager.connect(volcano, options: nil)
-            let _ = await NotificationCenter.default
-                                            .notifications(named: .deviceConnected).first(where: { _ in true })
-            return .success(())
+            let connectionResult = await withTaskGroup(of: Bool.self) { taskGroup in
+                taskGroup.addTask {
+                    return await NotificationCenter.default
+                        .notifications(named: .deviceConnected)
+                        .map { $0.name }
+                        .contains(where: { $0 == .deviceConnected }) // nop
+                }
+                taskGroup.addTask {
+                    try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+                    return false
+                }
+                for await result in taskGroup {
+                    taskGroup.cancelAll()
+                    return result
+                }
+                return false
+            }
+                                            
+            return connectionResult
+                    ? .success(())
+                    : .failure(.deviceNotFound)
         }
         
         return await self.runningDeviceConnectionTask!.value
     }
     
     private func discoverVolcano() async -> Result<CBPeripheral, BluetoothError> {
-        defer {
-            self.runningDeviceSearchTask = nil
-        }
-        
         guard self.runningDeviceSearchTask == nil else {
             return await self.runningDeviceSearchTask!.value
+        }
+        
+        defer {
+            self.runningDeviceSearchTask = nil
         }
         
         self.runningDeviceSearchTask = Task(priority: .userInitiated) {
@@ -362,12 +351,12 @@ actor ProductionBluetoothService: BluetoothService {
             
             let volcano: CBPeripheral? = await withTaskGroup(of: CBPeripheral?.self) { taskGroup in
                 taskGroup.addTask {
-                    await self.centralManager.scanForPeripherals(withServices: nil, options: nil)
+                    self.centralManager.scanForPeripherals(withServices: nil, options: nil)
                     let volcano = await NotificationCenter.default
                                                         .notifications(named: .deviceDiscovered)
                                                         .first(where: { _ in true })?
                                                         .userInfo?["device"] as? CBPeripheral
-                    await self.centralManager.stopScan()
+                    self.centralManager.stopScan()
                     return volcano
                 }
                 taskGroup.addTask {
@@ -394,12 +383,12 @@ actor ProductionBluetoothService: BluetoothService {
     }
     
     private func discoverRequiredServices() async -> [CBService] {
-        defer {
-            self.runningServiceSearchTask = nil
-        }
-        
         guard self.runningServiceSearchTask == nil else {
             return await self.runningServiceSearchTask!.value
+        }
+        
+        defer {
+            self.runningServiceSearchTask = nil
         }
         
         self.runningServiceSearchTask = Task(priority: .userInitiated) {
@@ -410,22 +399,23 @@ actor ProductionBluetoothService: BluetoothService {
             }
             
             volcano.discoverServices(nil)
-            let discoveredServicesNotification = await NotificationCenter.default
-                                                                        .notifications(named: .servicesDiscovered)
-                                                                        .first(where: { _ in true })
-            return discoveredServicesNotification?.userInfo?["services"] as? [CBService] ?? []
+            let discoveredServices = await NotificationCenter.default
+                                                             .notifications(named: .servicesDiscovered)
+                                                             .compactMap { $0.userInfo?["services"] as? [CBService] }
+                                                             .first(where: { _ in true })
+            return discoveredServices ?? []
         }
         
         return await self.runningServiceSearchTask!.value
     }
     
     private func discoverRequiredCharacteristics() async -> [CBCharacteristic] {
-        defer {
-            self.runningCharacteristicSearchTask = nil
-        }
-        
         guard self.runningCharacteristicSearchTask == nil else {
             return await self.runningCharacteristicSearchTask!.value
+        }
+        
+        defer {
+            self.runningCharacteristicSearchTask = nil
         }
         
         self.runningCharacteristicSearchTask = Task(priority: .userInitiated) {
@@ -459,41 +449,59 @@ actor ProductionBluetoothService: BluetoothService {
 
 fileprivate final class BluetoothServiceCBDelegate: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     
-    var currentManagerState = CBManagerState.unknown
-    
+    @MainActor
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        self.currentManagerState = central.state
+        
+//        MainActor.run {
+//            Services.shared.volcanoManager.set(state: )
+//        }
     }
     
+    @MainActor
     func centralManager(_ central: CBCentralManager, 
                         didDiscover peripheral: CBPeripheral, 
                         advertisementData: [String : Any], 
                         rssi RSSI: NSNumber) {
-        guard peripheral.name?.contains("VOLCANO") == true else {
+        guard let volcano = peripheral.asVolcano else {
             return
         }
-        NotificationCenter.default.post(.deviceDiscovered(peripheral))
+        NotificationCenter.default.post(.deviceDiscovered(volcano))
     }
     
-    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    @MainActor
+    func centralManager(_ central: CBCentralManager,
+                        didConnect peripheral: CBPeripheral) {
         NotificationCenter.default.post(.deviceConnected())
+        Services.shared.volcanoManager.set(state: .connected)
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+    @MainActor
+    func centralManager(_ central: CBCentralManager,
+                        didDisconnectPeripheral peripheral: CBPeripheral,
+                        error: Error?) {
+        Services.shared.volcanoManager.set(state: .disconnected)
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral,
+                    didDiscoverServices error: Error?) {
         guard let services = peripheral.services else {
             return
         }
         NotificationCenter.default.post(.servicesDiscovered(services))
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+    func peripheral(_ peripheral: CBPeripheral,
+                    didDiscoverCharacteristicsFor service: CBService,
+                    error: Error?) {
         guard let characteristics = service.characteristics else {
             return
         }
         NotificationCenter.default.post(.charsDiscovered(characteristics, for: service))
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+    func peripheral(_ peripheral: CBPeripheral,
+                    didUpdateValueFor characteristic: CBCharacteristic,
+                    error: Error?) {
         guard let newValue = characteristic.value else {
             return
         }

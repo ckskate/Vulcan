@@ -3,15 +3,11 @@ import SwiftUI
 @MainActor
 class ContentViewModel: ObservableObject {
     
-    private let bluetoothService: BluetoothService
+    @Service(\.bluetoothService) private var bluetoothService
     
     private var backgroundConnectionTask: Task<Void, Never>?
     
     @Published var isConnected: Bool = false
-    
-    init(bluetoothService: BluetoothService) {
-        self.bluetoothService = bluetoothService
-    }
     
     func startConnectionTrackingLoop() {
         guard self.backgroundConnectionTask == nil else {
